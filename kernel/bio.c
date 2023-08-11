@@ -39,9 +39,7 @@ struct {
 void
 binit(void)
 {
-  struct bucket *buc;
-
-  initlock(&bcache.lock, "bcache");
+    struct bucket *buc;
 
     initlock(&bcache.lock, "bcache");
     for (int i = 0; i < NBUCKET; i++) {
