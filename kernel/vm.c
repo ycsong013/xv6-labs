@@ -290,7 +290,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
   freewalk(pagetable);
 }
-
+extern uint page_refcount[];
 // Given a parent process's page table, copy
 // its memory into a child's page table.
 // Copies both the page table and the
@@ -303,7 +303,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -312,13 +311,14 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
+    if(flags & PTE_W) {
+        flags = (flags & ~PTE_W) | PTE_C;
+        *pte = PA2PTE(pa) | flags;
     }
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
+        goto err;
+    }
+    page_refcount[PA_INDEX(pa)]++;
   }
   return 0;
 
@@ -350,6 +350,14 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    if(va0 >= MAXVA) return -1;
+    pte_t *pte = walk(pagetable, va0, 0);
+    if (pte==0) return -1;
+    uint flags = PTE_FLAGS(*pte);
+    if((flags & (PTE_U|PTE_V)) != (PTE_U|PTE_V)) return -1;
+    if(flags & PTE_C){
+        if(cowalloc(pagetable, va0)!=0) return -1;
+    }
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
